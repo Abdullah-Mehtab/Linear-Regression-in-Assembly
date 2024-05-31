@@ -1,0 +1,412 @@
+CONSTANTS BEING USED
+s0 <-- Number of rows
+s1 <-- Number of Cols
+t9 <-- Data[1:] # Not needed after UDF-1
+
+s2 <-- Number of Rows in TRAIN DATA
+s3 <-- Number of Rows in TEST DATA
+
+f0 <-- Average of Y || Ybar 
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+UDF 1
+
+a) Read file and store in buffer 'a2' || Display Raw
+-> Stolen from Assignment-2 --- save buffer in t9 (just in case)
+
+1st line in buffer is row and col
+b) Rows may be in 10s or 1s - check for both and store s0 (as integer) 
+-> Read first char (always a number) - convert to integer and store in s0
+    go to next bit --- if its a comma, then move to Column
+    otherwise its a number, convert it to integer and store in s2
+    multiply previous item in s0 by 10 to convert it into TENS
+    add s2 and s0, store in s0
+
+c) Cols wont be above 1s - store in s1 (as integer)
+-> Cols will amost always be single integer (in ONEs)
+    convert to integer and store in s1
+
+Move 3 bits ahead to jump the col-integer and nextline char
+
+d) Save "a2" in "t9" to be a permanent address from where the actual data starts
+    print all the data in a proper format once to (debug check + data display)
+
+e) Load the Empty matrix || Reset buffer to 't9' (start of raw data)
+    
+    -> matrix register t8 
+    -> t1 = t9 (the input)
+    -> t7 Flag (to check if ONEs) 
+               1 = True | 2 = False
+
+    Initialize Matrix Loop
+        Load character from t1 in t2 | lb t2 0(t1)
+        Check if character t2 is NULL (finish Initialization)
+        Check if character t2 is nextlin (reset flag | move to next chr)
+        Check if character t2 is a COMMA (reset flag | move to next chr)
+
+        move to next character (do not load) --> t1 += 1
+
+        # If its not a nextline, null, or comma, its an integer
+        convert int-chr to int (sub 48) --> t2 -= 48
+        t7 += 1
+        if t7 == 1:
+            save to array | sw t2 0(t8)
+            move to next address in array | t8 += 4
+            jump init matrix Loop
+        
+        # Otherwise its in bigger digits ---
+        move to previous address in array | t8 -= 4
+        Load integer | lw t3 0(t8)
+        multiply 10 to t3
+        t2 = t2 (current) + t3
+        Save t2 back into array | sw t2 0(t8)
+        move to next address | t8 += 4
+
+        jump init matrix Loop
+
+    reset_flag:
+        t7 = 0
+        t1 += 1
+
+    finish_init:
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+UDF 2
+
+x) Pseudo-random function that returns 0 or 1 
+random_function:
+    # syscall 42 (MARS random number generator)
+    li v0, 42
+    syscall
+
+    # Use the least significant bit of the result
+    and v0, v0, 1
+
+    jr $ra  # Return to the calling function
+------------------------------------------------------- # ROGUE FUNCTIONS RIGHT BEFORE EXIT
+
+    -> ALL_matrix    register t9 || load address
+    -> train_mat  register t8 || load address
+    -> test_mat   register t7 || load address
+
+1) Calculate 80% of Rows (for TRAIN)
+    mul s2, s0, 8
+    div s2, s2, 10
+
+2) Calculate 20% of Rows (for TEST)
+    mul s3, s0, 2
+    div s3, s3, 10
+
+3) Fill test and train data
+
+    # Loop through the data and store data as we go
+    loop_divide_data:
+        # Randomly choose whether to include the current row in TRAIN DATA
+        jal random_function # random function that returns 0 or 1 in v0
+        # If v0 is 0, include the row in TRAIN DATA
+        beqz v0, include_in_train_data
+        # If v0 is 1, include the row in TEST DATA
+        b include_in_test_data
+    include_in_train_data:
+        # Check if we have reached 80% of the rows for TRAIN
+        beqz s2, end_train  
+        # Copy the row from the 2D array to TRAIN DATA
+        li t3, 0 # Counter to check if all columns were copied from the selected row
+        copy_rowA:
+            beq t3, s1, loop_divide_data 
+            lw t2, 0(t9) # Load from ALL
+            sw t2, 0(t8) # Save in TRAIN
+            addi t9, t9, 4
+            addi t8, t8, 4
+            addi t3, t3, 1
+            addi s2, s2, -1
+            j copy_rowA
+    include_in_test_data:
+        # Check if we have reached 20% of rows for TEST
+        beqz s3, end_test
+        # Copy the row from the 2D array to TEST DATA
+        li t3, 0 # Counter to check if all columns were copied from the selected row
+        copy_rowB:
+            beq t3, s1, loop_divide_data 
+
+            lw t2, 0(t9) # Load from ALL
+            sw t2, 0(t7) # Save in TEST
+            addi t9, t9, 4
+            addi t7, t7, 4
+            addi t3, t3, 1
+            addi s3, s3, -1
+            j copy_rowB
+    end_train:
+        # Check if 20% of test data is complete too
+        beqz s3, end_divide_data
+        # Otherwise loop again
+        j loop_divide_data
+    end_train:
+        # Check if 80% of test data is complete too
+        beqz s2, end_divide_data
+        # Otherwise loop again
+        j loop_divide_data
+    end_divide_data:
+
+    # Display :v
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+UDF 3
+
+s3 <-- Adress of train_mat
+s2 <-- Number of Rows in TRAIN DATA
+s1 <-- Number of Cols
+
+NEW 1-D ARRAY (Averages)
+NEW 1-D ARRAY (Numerators)
+NEW 1-D ARRAY (Denominators)
+
+NEW 1-D ARRAY (Weights)
+
+1) Use trainmatrix to find MEANS of ALL Columns and store in an Array (same column indexes) 
+    # Algo already solved through Lab-10
+
+    # Convert values to FLOAT then divide to FLOAT
+    # Save FLOATs in Avg_Array
+    # Load and Save First Index of Avg_Array in a CONSTANT register
+    # f0 <-- Average of Y || Ybar 
+
+    
+
+2) Use python code and calculate Numerators + Denominators (fill array)
+
+    IMPORTANT NOTE: Start by ignoring first element and ignore each rows first element
+    
+    Method A (didnt work): Keep Y intercepts values 0 (by force adding 0s at its position)
+    Method B: Make Denominator for Y intercept massive, so the value is NEAR zero (which makes it negligible) 
+
+    train_mat --> t0
+    avg_mat --> t3
+    Numerator --> t4
+    Denominators --> t5
+
+    init row counter --> t1
+    init col counter --> t2
+    
+    Ybar --> f0
+
+    # Loop A (run for amount of rows in TRAIN) --> s2
+
+        # Loop B (run for amount of columns) --> s1
+
+            # Calculate 
+            Load train_mat[t0] --> t6 --> f1 
+            Convert t6 to FLOAT (mtc1, cvt.s.w)
+
+            f3 <-- f1 - f0 # Y_Diff
+            t0 += 4 
+            t3 += 4 # Not being used but adding to ignore Y values for X calculation
+            
+            Load train_mat[t0] --> t6
+            # Convert t6 to FLOAT (mtc1 t6, f1)
+
+            Load Avg[t3] --> t7
+            # Convert t7 to FLOAT (mtc1 t6, f2)
+
+            # f4 <-- f1 - f2 # X_Diff
+            t0 += 4 
+            t3 += 4 
+
+            # Save Numerator
+            f5 <-- f3 * f4
+            Load Numerator[t4] --> f6 (l.s to load float)
+            f6 += f5                  (use float adder)
+            Save Numerator[t4] <-- f6 (s.s to save float)
+            t4 += 4
+
+            # Save Denominator
+            f5 <-- f4 * f4
+            Load Numerator[t4] --> f6 (l.s to load float)
+            f6 += f5                  (use float adder)
+            Save Numerator[t4] <-- f6 (s.s to save float)
+            t4 += 4
+
+            # t1 += 1
+            bne t1, s1, Loop B --> IF COLS FINISHED, GO AHEAD, ELSE LOOP
+
+        # Reset Addresses
+        avg_mat --> t3
+        Numerator --> t4
+        Denominators --> t5
+
+        Reset col counter (t1 = 0)
+        t2 += 1
+        bne t2, s2, Loop A --> IF ROWS FINISHED END FILLING PREDICTIONS
+
+    # Display Numerator/Denominator if needed (excluding for output interface)
+
+3) Store weights (column correspondence to num/dem) 
+    
+    weights --> t0
+    Numerator --> t1
+    Denominator --> t2
+
+    # Save a NULL FLOAT (to prevent 0 division)
+    mtc1 $zero, $f3
+
+    init col counter --> t3
+
+    LoopA (run for amount of columns)
+        beq $t3, $s1, end_weight
+
+        Load Denominator[t2] --> f1 (l.s to load float)
+        beq f1, f3, null_element
+
+        Load Numerator[t1] --> f2   (l.s to load float)
+
+        div.s $f4, $f2, $f1
+        
+        Save weight[t0] <-- f4 (s.s to save float)
+            
+        t0 += 4
+        t1 += 4
+        t2 += 4
+        t3 += 1
+
+        j LoopA
+
+    null_element:
+        Save weight[t0] <-- f1 (s.s to save float)
+        
+        t0 += 4
+        t1 += 4
+        t2 += 4
+        t3 += 1
+
+        j LoopA
+
+    end_weight:
+    
+4) Calculate the first element in weights
+    weights --> t0
+    avg_mat --> t1
+
+    mov.s f30, f0 --> Save Ybar in temp (to be changed and stored as Yintercept)
+    t0 += 4
+    t1 += 4 # Ignore Ybar
+
+    init col counter --> t2
+
+    # Looping from 2nd element in weights
+    LoopA (run for amount of columns) 
+        Load weights[t0] --> f1 (l.s to load float)
+        Load avg_mat[t1] --> f2 (l.s to load float)
+
+        # Decrease current from 
+        f3 = f1 * f2 (use float multiplication)
+
+        f30 -= f3    (use float subtraction)        
+
+    # Store the Yintercept element into the weights array at first index
+    weights --> t0
+    Save weights[t0] <-- f30 (s.s to save float)
+
+    t2 += 1
+    bne t2, s1, LoopA
+
+5) Print Weights
+
+UDF-4 --- Test Model
+
+NEW 1-D ARRAY (Predicted values)
+
+NEED TO DO?
+Fill predicc with slope value (b0) -- as they are always added so :v
+
+1) Fill the predicted values by using weight matrix and predictor variables
+    IMPORTANT NOTE: Start by ignoring first element and ignore each rows first element
+    
+    test_mat --> t0
+    weights --> t3
+    prediction --> t4
+
+    init row counter --> t1
+    init col counter --> t2
+    
+    # Loop A (run for amount of rows in TEST) --> s3
+
+        # Loop B (run for amount of weights [cols] ) --> s1
+
+            Load train_mat[t0] --> t5
+            t0 += 4
+            # Convert t5 to FLOAT (mtc1 t5, f1)
+
+            Load weight[t3] --> f2 (l.s to load float)
+            t3 += 4
+
+            # f3 <-- f1 * f2
+
+            Save prediction[t4] --> f4 (l.s to load float)
+            f4 += f3                   (use float adder)
+            Save prediction[t4] <-- f4 (s.s to save float)
+            t4 += 4
+            
+            # t1 += 1
+            bne t1, s1, Loop B --> IF COLS FINISHED, GO AHEAD, ELSE LOOP
+
+        # Reset Addresses
+        weights --> t3
+        prediction --> t4
+
+        # Reset col counter (t1 = 0)
+        # t2 += 1
+        # Ignore first element in test_mat (t0 += 4)
+        bne t2, s3, Loop A --> IF ROWS FINISHED END FILLING PREDICTIONS
+
+2) Display Formula
+
+
+3) Display Actual VS Predicted Data
+
+    test_mat --> t0
+    prediction --> t1
+
+    init helper variable --> t9
+    init row counter --> t2
+
+    # Run Simple Loop for num of rows in test_mat --> s3
+        
+        # Print "Actual: " (STRING PRINT)
+        Load test_mat[t0] --> a0
+                
+        Print element
+        li $v0, 1
+        syscall
+
+        # Move to next ROW (not element) in matrix
+        # s3 = ROWS || s1 = COLS
+        mul $t9, $s1, 4
+        # Move to the next column
+        add $t0, $t0, $t9
+
+        # Print "\t Predicted: " (STRING PRINT)
+        Load prediction[t1] --> a2
+        t1 += 4
+        # Convert a2 to FLOAT (mtc1 a2, f12)
+
+        Print element
+        li $v0, 2
+        syscall
+
+        Print nextline
+
+        t2 += 1
+        beq t2, s3, jump_back_to_main
+
+jump_back_to_main:
+
+jr $ra
+
+
+
